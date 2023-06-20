@@ -1,4 +1,3 @@
-// Import necessary modules
 use std::env;
 use std::fs;
 use std::io::{self, BufRead};
@@ -7,8 +6,9 @@ use chrono::{Local, DateTime, TimeZone, Utc};
 use csv::WriterBuilder;
 use getopts::Options;
 use std::time::UNIX_EPOCH;
+use indicatif::{ProgressBar, ProgressStyle};
 
-// Define a struct to hold file information
+// Struct to hold information about a file
 #[derive(Debug)]
 struct FileInfo {
     name: String,
@@ -19,30 +19,36 @@ struct FileInfo {
     lines: usize,
 }
 
-// Main function
-fn main() -> io::Result<()> {
-    // Get command line arguments
-    let args: Vec<String> = env::args().collect();
+// Compute total number of files
+fn compute_total_files(dir: &str) -> io::Result<u64> {
+    let mut file_count = 0;
+    for entry in fs::read_dir(dir)? {
+        let entry = entry?;
+        let metadata = fs::metadata(entry.path())?;
+        if metadata.is_file() {
+            file_count += 1;
+        } else if metadata.is_dir() {
+            file_count += compute_total_files(entry.path().to_str().unwrap())?;
+        }
+    }
+    Ok(file_count)
+}
 
-    // Define and set command line options
+fn main() -> io::Result<()> {
+    // Parse command line arguments
+    let args: Vec<String> = env::args().collect();
     let mut opts = Options::new();
     opts.optopt("i", "input", "set input directory", "INPUT");
     opts.optopt("o", "output", "set output directory", "OUTPUT");
     opts.optflag("h", "help", "print this help menu");
-
-    // Match command line arguments to the defined options
     let matches = match opts.parse(&args[1..]) {
         Ok(m) => { m }
         Err(f) => { panic!("{}", f.to_string()) }
     };
-
-    // If help option is specified, print help and return
     if matches.opt_present("h") {
         print_usage(&opts);
         return Ok(());
     }
-
-    // Get the input and output directories from command line arguments
     let input_dir = matches.opt_str("i").unwrap();
     let output_dir = matches.opt_str("o").unwrap();
 
@@ -54,21 +60,28 @@ fn main() -> io::Result<()> {
         panic!("Output directory does not exist");
     }
 
-    // Initialize an empty vector to hold the file information
+    // Compute total number of files
+    let total_files = compute_total_files(&input_dir)?;
+    // Create a new progress bar
+    let pb = ProgressBar::new(total_files);
+    pb.set_style(
+        ProgressStyle::default_bar()
+        .progress_chars("#>-")
+        .template("[{elapsed_precise}] {bar:40.cyan/blue} {pos}/{len} ({eta})")
+        .unwrap()
+    );
+    
+    
+    // Collect file data
     let mut file_data: Vec<FileInfo> = vec![];
+    process_dir(&input_dir, &mut file_data, &pb)?;
 
-    // Process the directory and get file information
-    process_dir(&input_dir, &mut file_data)?;
-
-    // Create the output CSV file
+    // Write the file data to the CSV file
     let now = Local::now();
     let output_file_path = format!("{}/summary_{}.csv", output_dir, now.format("%Y%m%d%H%M%S"));
     let mut wtr = WriterBuilder::new().has_headers(true).from_path(output_file_path)?;
 
-    // Write headers to the CSV file
     wtr.write_record(&["file_nm", "file_dir", "create_dt", "modify_dt", "size_bytes", "line_ct"])?;
-
-    // Write file information to the CSV file
     for file_info in file_data {
         wtr.write_record(&[
             &file_info.name,
@@ -80,42 +93,33 @@ fn main() -> io::Result<()> {
         ])?;
     }
 
-    // Flush the writer
+    // Finish writing to the CSV file
     wtr.flush()?;
 
-    // Return result
+    // Finish the progress bar
+    pb.finish_with_message("done");
     Ok(())
 }
 
-// Function to process directory and get file information
-fn process_dir(dir: &str, file_data: &mut Vec<FileInfo>) -> io::Result<()> {
-    // Iterate over each entry in the directory
+// Process a directory
+fn process_dir(dir: &str, file_data: &mut Vec<FileInfo>, pb: &ProgressBar) -> io::Result<()> {
     for entry in fs::read_dir(dir)? {
         let entry = entry?;
         let metadata = fs::metadata(entry.path())?;
-
-        // Check if the entry is a file
         if metadata.is_file() {
+            // Collect file metadata and add to file_data
             let file_name = String::from(entry.file_name().to_str().unwrap());
             let file_directory = String::from(dir);
 
-            println!("Reading metadata for: {:?}", entry.path());
-
-            // Get the creation and modification times
             let create_date = Utc.timestamp_opt(metadata.created()?.duration_since(UNIX_EPOCH).expect("Time went backwards").as_secs() as i64, 0).unwrap();
             let modify_date = Utc.timestamp_opt(metadata.modified()?.duration_since(UNIX_EPOCH).expect("Time went backwards").as_secs() as i64, 0).unwrap();
-
-            // Get the file size
+        
             let size = metadata.len();
 
-            println!("Opening file: {:?}", entry.path());
             let file = fs::File::open(&entry.path())?;
-
-            // Count the lines in the file
             let reader = io::BufReader::new(file);
             let lines = reader.lines().count();
 
-            // Create a FileInfo struct and push it to the vector
             let file_info = FileInfo {
                 name: file_name,
                 directory: file_directory,
@@ -125,16 +129,16 @@ fn process_dir(dir: &str, file_data: &mut Vec<FileInfo>) -> io::Result<()> {
                 lines: lines,
             };
             file_data.push(file_info);
+            pb.inc(1);
         } else if metadata.is_dir() {
-            // If the entry is a directory, recursively call the process_dir function
-            process_dir(entry.path().to_str().unwrap(), file_data)?;
+            // Recursively process subdirectory
+            process_dir(entry.path().to_str().unwrap(), file_data, pb)?;
         }
     }
-    // Return result
     Ok(())
 }
 
-// Function to print usage of the program
+// Print usage message
 fn print_usage(opts: &Options) {
     let brief = "Usage: sas_parser_rust -i INPUTDIR -o OUTPUTDIR";
     print!("{}", opts.usage(&brief));

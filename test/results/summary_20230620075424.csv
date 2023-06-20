@@ -1,6 +1,0 @@
-file_nm,file_dir,create_dt,modify_dt,size_bytes,line_ct
-sas_script_d1.sas,/Users/gcattabriga/Downloads/GitHub/sas_parser/test_data/deeper_test_data,2023-06-12 19:14:01,2023-06-12 19:21:30,522,24
-sas_script_3.sas,/Users/gcattabriga/Downloads/GitHub/sas_parser/test_data,2023-06-12 13:28:28,2023-06-16 17:36:57,789,36
-sas_script_2.sas,/Users/gcattabriga/Downloads/GitHub/sas_parser/test_data,2023-06-12 13:28:28,2023-06-12 19:15:29,614,26
-sas_script_1.sas,/Users/gcattabriga/Downloads/GitHub/sas_parser/test_data,2023-06-12 13:28:28,2023-06-16 17:36:46,578,26
-sas_script_4.sas,/Users/gcattabriga/Downloads/GitHub/sas_parser/test_data,2023-06-12 13:28:28,2023-06-12 13:28:28,5447,156
