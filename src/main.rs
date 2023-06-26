@@ -1,62 +1,50 @@
-use std::env;
-use std::fs;
-use std::io::{self, BufRead, BufReader};
-use std::path::{Path, PathBuf};
-use chrono::{Local, DateTime, TimeZone, Utc};
+/*
+* sas_parser_rust
+*
+* Author: Gary Cattabriga
+* Last updated: 6/23/2023
+* Version: 0.6
+* This program analyzes a directory of text files, providing several output metrics
+* including line count, count of SQL statements, and extracting all SQL blocks.
+*
+* Inputs:
+* -i, --input : Path to the directory to analyze
+* -o, --output : Path to the directory where the output CSV files will be written
+*
+* Outputs:
+* Two CSV files in the specified output directory:
+* 1. summary.csv - includes information about each file such as UUID, name, directory, creation date, modification date, and size
+* 2. detail.csv - includes the results of parsing functions such as line_count, sql_count, and get_sql
+*
+*/
+
+use chrono::{DateTime, Local, TimeZone, Utc};
 use csv::WriterBuilder;
 use getopts::Options;
-use std::time::UNIX_EPOCH;
 use indicatif::{ProgressBar, ProgressStyle};
 use regex::Regex;
+use std::env;
+use std::fs::{self, File};
+use std::io::{self, BufRead, BufReader};
+use std::path::Path;
+use std::time::UNIX_EPOCH;
 use uuid::Uuid;
 
-// Struct to hold information about a file
 #[derive(Debug)]
+// Define structure to hold information about each file
 struct FileInfo {
-    id: Uuid,  // Unique identifier
+    uuid: String,
     name: String,
     directory: String,
     create_date: DateTime<Utc>,
     modify_date: DateTime<Utc>,
     size: u64,
-    details: Vec<(&'static str, usize)>, // Vector of function results
 }
 
-// This trait will be implemented by any function that wants to parse files
-trait ParseFunction: Sync + Send {
-    // This function will return a description of the function
-    fn description(&self) -> &'static str;
-    // This function will parse the file and return a result
-    fn parse(&self, path: &PathBuf) -> io::Result<usize>;
-}
+// ParseFunction is a function that takes a file_id and a file_path,
+// and returns a Vec of results where each result is a tuple of (Function name, File ID, Result)
+type ParseFunction = fn(&String, &String) -> Vec<(String, String, String)>;
 
-// This struct represents a function that counts the number of lines in a file
-struct LineCount;
-impl ParseFunction for LineCount {
-    fn description(&self) -> &'static str {
-        "line_count"
-    }
-    fn parse(&self, path: &PathBuf) -> io::Result<usize> {
-        let file = fs::File::open(path)?;
-        let reader = BufReader::new(file);
-        Ok(reader.lines().count())
-    }
-}
-
-// This struct represents a function that counts the number of SQL blocks in a file
-struct SqlCount;
-impl ParseFunction for SqlCount {
-    fn description(&self) -> &'static str {
-        "sql_count"
-    }
-    fn parse(&self, path: &PathBuf) -> io::Result<usize> {
-        let content = fs::read_to_string(path)?;
-        let re = Regex::new(r"(?is)PROC\sSQL.*?QUIT;").unwrap();
-        Ok(re.find_iter(&content).count())
-    }
-}
-
-// This function calculates the total number of files in a directory
 fn compute_total_files(dir: &str) -> io::Result<u64> {
     let mut file_count = 0;
     for entry in fs::read_dir(dir)? {
@@ -71,55 +59,74 @@ fn compute_total_files(dir: &str) -> io::Result<u64> {
     Ok(file_count)
 }
 
-// This function processes a directory
-fn process_dir(dir: &str, file_data: &mut Vec<FileInfo>, pb: &ProgressBar, parse_functions: &Vec<Box<dyn ParseFunction>>) -> io::Result<()> {
-    for entry in fs::read_dir(dir)? {
-        let entry = entry?;
-        let metadata = fs::metadata(entry.path())?;
-        if metadata.is_file() {
-            // Collect file metadata and add to file_data
-            let file_name = String::from(entry.file_name().to_str().unwrap());
-            let file_directory = String::from(dir);
 
-            let create_date = Utc.timestamp_opt(metadata.created()?.duration_since(UNIX_EPOCH).expect("Time went backwards").as_secs() as i64, 0).unwrap();
-            let modify_date = Utc.timestamp_opt(metadata.modified()?.duration_since(UNIX_EPOCH).expect("Time went backwards").as_secs() as i64, 0).unwrap();
-        
-            let size = metadata.len();
+// Define our parse functions here:
+/* -------------------------
+* Parse Functions: These are the functions that will be used to parse the files.
+* They each perform a unique analysis on the file:
+* - line_count: Counts the number of lines in a file.
+* - sql_count: Counts the number of SQL blocks in a file.
+* - get_sql: Extracts SQL blocks from a file.
+* --------------------------- */
 
-            // Apply each parse function to the file and store the results
-            let mut details = vec![];
-            for function in parse_functions {
-                let result = function.parse(&entry.path())?;
-                details.push((function.description(), result));
+fn line_count(file_id: &String, file_path: &String) -> Vec<(String, String, String)> {
+    let file = File::open(file_path).unwrap();
+    let reader = BufReader::new(file);
+    let line_count = reader.lines().count();
+    vec![(file_id.clone(), "line_count".to_string(), line_count.to_string())]
+}
+
+fn sql_count(file_id: &String, file_path: &String) -> Vec<(String, String, String)> {
+    let content = fs::read_to_string(file_path).unwrap();
+    let content = content.to_uppercase();
+    let re = Regex::new(r"(?s)PROC\s+SQL.*?QUIT;").unwrap();
+    let sql_count = re.find_iter(&content).count();
+    vec![(file_id.clone(), "sql_count".to_string(), sql_count.to_string())]
+}
+
+fn get_sql(file_id: &String, file_path: &String) -> Vec<(String, String, String)> {
+    let mut results: Vec<(String, String, String)> = Vec::new();
+    let file = File::open(file_path).unwrap();
+    let reader = BufReader::new(file);
+    let mut inside_sql_block = false;
+    let mut sql_block: Vec<String> = Vec::new();
+    let mut sql_start_line = 0;
+    for (line_number, line_result) in reader.lines().enumerate() {
+        let line = line_result.unwrap();
+        let upper_line = line.to_uppercase();
+        if !inside_sql_block && upper_line.contains("PROC SQL") {
+            inside_sql_block = true;
+            sql_start_line = line_number + 1;
+        }
+        if inside_sql_block {
+            sql_block.push(line);
+            if upper_line.contains("QUIT;") {
+                inside_sql_block = false;
+                results.push((
+                    String::from(file_id),
+                    String::from("get_sql"),
+                    format!("({}, {})", sql_start_line, sql_block.join("\n")),
+                ));
+                sql_block.clear();
             }
-
-            let file_info = FileInfo {
-                id: Uuid::new_v4(),
-                name: file_name,
-                directory: file_directory,
-                create_date: create_date,
-                modify_date: modify_date,
-                size: size,
-                details: details,
-            };
-            file_data.push(file_info);
-            pb.inc(1);
-        } else if metadata.is_dir() {
-            // Recursively process subdirectory
-            process_dir(entry.path().to_str().unwrap(), file_data, pb, parse_functions)?;
         }
     }
-    Ok(())
+    results
 }
 
-// This function prints a usage message
-fn print_usage(opts: &Options) {
-    let brief = "Usage: sas_parser_rust -i INPUTDIR -o OUTPUTDIR";
-    print!("{}", opts.usage(&brief));
-}
 
+/* -------------------------
+* Main Function: This is where the program execution begins.
+* This function does the following:
+* 1. Parse command line arguments
+* 2. Create progress bar
+* 3. Process each file and directory
+* 4. Write file metadata to CSV
+* 5. Write file parse results to CSV
+* 6. Finish progress bar
+* --------------------------- */
 fn main() -> io::Result<()> {
-    // Parse command line arguments
+    // Command line argument handling
     let args: Vec<String> = env::args().collect();
     let mut opts = Options::new();
     opts.optopt("i", "input", "set input directory", "INPUT");
@@ -136,7 +143,6 @@ fn main() -> io::Result<()> {
     let input_dir = matches.opt_str("i").unwrap();
     let output_dir = matches.opt_str("o").unwrap();
 
-    // Check if input and output directories exist
     if !Path::new(&input_dir).exists() {
         panic!("Input directory does not exist");
     }
@@ -144,9 +150,7 @@ fn main() -> io::Result<()> {
         panic!("Output directory does not exist");
     }
 
-    // Compute total number of files
     let total_files = compute_total_files(&input_dir)?;
-    // Create a new progress bar
     let pb = ProgressBar::new(total_files);
     pb.set_style(
         ProgressStyle::default_bar()
@@ -155,24 +159,19 @@ fn main() -> io::Result<()> {
         .unwrap()
     );
 
-    // Initialize a vector of parse functions
-    let parse_functions: Vec<Box<dyn ParseFunction>> = vec![
-        Box::new(LineCount),
-        Box::new(SqlCount),
-    ];
-
-    // Collect file data
     let mut file_data: Vec<FileInfo> = vec![];
-    process_dir(&input_dir, &mut file_data, &pb, &parse_functions)?;
+    process_dir(&input_dir, &mut file_data, &pb)?;
 
-    // Write the file data to the CSV file
     let now = Local::now();
     let output_file_path = format!("{}/summary_{}.csv", output_dir, now.format("%Y%m%d%H%M%S"));
-    let mut wtr = WriterBuilder::new().has_headers(true).from_path(output_file_path)?;
-    wtr.write_record(&["id", "file_nm", "file_dir", "create_dt", "modify_dt", "size_bytes"])?;
+    let mut wtr_summary = WriterBuilder::new()
+        .has_headers(true)
+        .from_path(output_file_path)?;
+
+    wtr_summary.write_record(&["uuid", "file_nm", "file_dir", "create_dt", "modify_dt", "size_bytes"])?;
     for file_info in &file_data {
-        wtr.write_record(&[
-            &file_info.id.to_string(),
+        wtr_summary.write_record(&[
+            &file_info.uuid,
             &file_info.name,
             &file_info.directory,
             &file_info.create_date.format("%Y-%m-%d %H:%M:%S").to_string(),
@@ -181,25 +180,77 @@ fn main() -> io::Result<()> {
         ])?;
     }
 
-    // Write detail file
+    wtr_summary.flush()?;
+
     let output_file_path = format!("{}/detail_{}.csv", output_dir, now.format("%Y%m%d%H%M%S"));
-    let mut wtr = WriterBuilder::new().has_headers(true).from_path(output_file_path)?;
-    wtr.write_record(&["id", "function", "result"])?;
-    for file_info in file_data {
-        for detail in file_info.details {
-            wtr.write_record(&[
-                &file_info.id.to_string(),
-                detail.0,
-                &detail.1.to_string(),
-            ])?;
+    let mut wtr_detail = WriterBuilder::new()
+        .has_headers(true)
+        .from_path(output_file_path)?;
+
+    wtr_detail.write_record(&["uuid", "func_nm", "result"])?;
+
+    let parse_functions: Vec<ParseFunction> = vec![line_count, sql_count, get_sql];
+
+    for file_info in &file_data {
+        let file_path = format!("{}/{}", &file_info.directory, &file_info.name);
+        for parse_function in &parse_functions {
+            let results = parse_function(&file_info.uuid, &file_path);
+            for result in results {
+                let record: Vec<String> = vec![result.0, result.1, result.2];
+                wtr_detail.write_record(&record)?;
+            }
         }
     }
 
-    // Finish writing to the CSV file
-    wtr.flush()?;
+    wtr_detail.flush()?;
 
-    // Finish the progress bar
     pb.finish_with_message("done");
     Ok(())
 }
 
+/* -------------------------
+* This function processes a single file, it does the following:
+* 1. Get the metadata
+* 2. Create and store a FileInfo structure
+* 3. Update the progress bar
+* --------------------------- */
+fn process_dir(dir: &str, file_data: &mut Vec<FileInfo>, pb: &ProgressBar) -> io::Result<()> {
+    for entry in fs::read_dir(dir)? {
+        let entry = entry?;
+        let metadata = fs::metadata(entry.path())?;
+        if metadata.is_file() {
+            let file_name = String::from(entry.file_name().to_str().unwrap());
+            let file_directory = String::from(dir);
+
+            let create_date = Utc.timestamp_opt(metadata.created()?.duration_since(UNIX_EPOCH).expect("Time went backwards").as_secs() as i64, 0).unwrap();
+            let modify_date = Utc.timestamp_opt(metadata.modified()?.duration_since(UNIX_EPOCH).expect("Time went backwards").as_secs() as i64, 0).unwrap();
+
+            let size = metadata.len();
+            let uuid = Uuid::new_v4().to_string();
+
+            let file_info = FileInfo {
+                uuid: uuid,
+                name: file_name,
+                directory: file_directory,
+                create_date: create_date,
+                modify_date: modify_date,
+                size: size,
+            };
+
+            file_data.push(file_info);
+            pb.inc(1);
+        } else if metadata.is_dir() {
+            process_dir(entry.path().to_str().unwrap(), file_data, pb)?;
+        }
+    }
+    Ok(())
+}
+
+/* -------------------------
+* This function prints usage of the command-line tool.
+* It's called when the command line arguments are not valid.
+* --------------------------- */
+fn print_usage(opts: &Options) {
+    let brief = format!("Usage: ./text_file_analyzer [options]");
+    print!("{}", opts.usage(&brief));
+}
