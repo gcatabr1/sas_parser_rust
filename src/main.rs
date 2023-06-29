@@ -114,6 +114,68 @@ fn get_sql(file_id: &String, file_path: &String) -> Vec<(String, String, String)
     results
 }
 
+fn get_libname(file_id: &String, file_path: &String) -> Vec<(String, String, String)> {
+    let content = fs::read_to_string(file_path).unwrap();
+    let mut results: Vec<(String, String, String)> = Vec::new();
+    for (line_number, line) in content.lines().enumerate() {
+        if line.to_uppercase().starts_with("LIBNAME") {
+            results.push((file_id.clone(), "get_libname".to_string(), format!("({})", line)));
+        }
+    }
+    results
+}
+
+fn get_password(file_id: &String, file_path: &String) -> Vec<(String, String, String)> {
+    let content = fs::read_to_string(file_path).unwrap();
+    let mut results: Vec<(String, String, String)> = Vec::new();
+    for (line_number, line) in content.lines().enumerate() {
+        let upper_line = line.to_uppercase();
+        if upper_line.contains("PASSWORD=") && !upper_line.contains("&PASSWORD") {
+            results.push((file_id.clone(), "get_password".to_string(), format!("({}):{}", line_number + 1, line)));
+        }
+    }
+    results
+}
+
+fn export_count(file_id: &String, file_path: &String) -> Vec<(String, String, String)> {
+    let content = fs::read_to_string(file_path).unwrap();
+    let count = content.to_uppercase().matches("EXPORT").count();
+    vec![(file_id.clone(), "export_count".to_string(), count.to_string())]
+}
+
+fn null_count(file_id: &String, file_path: &String) -> Vec<(String, String, String)> {
+    let content = fs::read_to_string(file_path).unwrap();
+    let count = content.matches("_null_").count();
+    vec![(file_id.clone(), "null_count".to_string(), count.to_string())]
+}
+
+fn find_date(file_id: &String, file_path: &String) -> Vec<(String, String, String)> {
+    let re = Regex::new(r"\b\d{4}-\d{2}-\d{2}\b").unwrap();
+    let content = fs::read_to_string(file_path).unwrap();
+    let mut results: Vec<(String, String, String)> = Vec::new();
+    for (line_number, line) in content.lines().enumerate() {
+        if re.is_match(line) {
+            results.push((file_id.clone(), "find_date".to_string(), format!("({}):{}", line_number + 1, line)));
+        }
+    }
+    results
+}
+
+fn find_file_name(file_id: &String, file_path: &String, file_list: &Vec<String>) -> Vec<(String, String, String)> {
+    let content = fs::read_to_string(file_path).unwrap();
+    let mut results: Vec<(String, String, String)> = Vec::new();
+    for (line_number, line) in content.lines().enumerate() {
+        for file_name in file_list {
+            if line.contains(file_name) {
+                results.push((file_id.clone(), "find_file_name".to_string(), format!("({}):{}", line_number + 1, line)));
+                break;
+            }
+        }
+    }
+    results
+}
+
+
 
 /* -------------------------
 * Main Function: This is where the program execution begins.
@@ -189,7 +251,16 @@ fn main() -> io::Result<()> {
 
     wtr_detail.write_record(&["uuid", "func_nm", "result"])?;
 
-    let parse_functions: Vec<ParseFunction> = vec![line_count, sql_count, get_sql];
+    let parse_functions: Vec<ParseFunction> = vec![
+        line_count, 
+        sql_count, 
+        get_sql, 
+        get_libname, 
+        get_password,
+        export_count,
+        null_count,
+        find_date
+    ];
 
     for file_info in &file_data {
         let file_path = format!("{}/{}", &file_info.directory, &file_info.name);
