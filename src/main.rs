@@ -2,8 +2,10 @@
 * sas_parser_rust
 *
 * Author: Gary Cattabriga
-* Last updated: 6/23/2023
-* Version: 0.6
+* Date: 6/23/2023
+* Last updated: 6/30/2023
+*               add timer so we can get more precise timing of the parsing routine
+* Version: 0.7
 * This program analyzes a directory of text files, providing several output metrics
 * including line count, count of SQL statements, and extracting all SQL blocks.
 *
@@ -29,6 +31,7 @@ use std::io::{self, BufRead, BufReader};
 use std::path::Path;
 use std::time::UNIX_EPOCH;
 use uuid::Uuid;
+use std::time::{Duration, Instant};
 
 #[derive(Debug)]
 // Define structure to hold information about each file
@@ -221,8 +224,14 @@ fn main() -> io::Result<()> {
         .unwrap()
     );
 
+
     let mut file_data: Vec<FileInfo> = vec![];
+
+    let start_time = Instant::now(); // Start the timer
+
     process_dir(&input_dir, &mut file_data, &pb)?;
+
+    let elapsed_time = start_time.elapsed(); // Calculate the elapsed time
 
     let now = Local::now();
     let output_file_path = format!("{}/summary_{}.csv", output_dir, now.format("%Y%m%d%H%M%S"));
@@ -276,6 +285,8 @@ fn main() -> io::Result<()> {
     wtr_detail.flush()?;
 
     pb.finish_with_message("done");
+    println!("Total time elapsed: {:?}", elapsed_time);
+
     Ok(())
 }
 
