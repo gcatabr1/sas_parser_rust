@@ -70,6 +70,11 @@ fn compute_total_files(dir: &str) -> io::Result<u64> {
 * - line_count: Counts the number of lines in a file.
 * - sql_count: Counts the number of SQL blocks in a file.
 * - get_sql: Extracts SQL blocks from a file.
+* - get_libname: extracts any line that starts with LIBNAME.
+* - get_password: return any line, and it's corresponding line number, that has password = (but not &password)
+* - get_export_count: return number of lines that have EXPORT.
+* - get_null_count: return number of lines that have _null_
+* - find_date: return line and line number of any line that has a string of format: YYYY-MM-DD
 * --------------------------- */
 
 fn line_count(file_id: &String, file_path: &String) -> Vec<(String, String, String)> {
