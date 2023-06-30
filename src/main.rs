@@ -132,13 +132,14 @@ fn get_password(file_id: &String, file_path: &String) -> Vec<(String, String, St
     let content = fs::read_to_string(file_path).unwrap();
     let mut results: Vec<(String, String, String)> = Vec::new();
     for (line_number, line) in content.lines().enumerate() {
-        let upper_line = line.to_uppercase();
-        if upper_line.contains("PASSWORD=") && !upper_line.contains("&PASSWORD") {
-            results.push((file_id.clone(), "get_password".to_string(), format!("({}):{}", line_number + 1, line)));
+        let modified_line = line.to_uppercase().replace(char::is_whitespace, "");
+        if modified_line.contains("PASSWORD=") && !modified_line.contains("&PASSWORD") {
+            results.push((file_id.clone(), "get_password".to_string(), format!("({}, {})", line_number + 1, modified_line)));
         }
     }
     results
 }
+
 
 fn export_count(file_id: &String, file_path: &String) -> Vec<(String, String, String)> {
     let content = fs::read_to_string(file_path).unwrap();
@@ -148,7 +149,8 @@ fn export_count(file_id: &String, file_path: &String) -> Vec<(String, String, St
 
 fn null_count(file_id: &String, file_path: &String) -> Vec<(String, String, String)> {
     let content = fs::read_to_string(file_path).unwrap();
-    let count = content.matches("_null_").count();
+    let content = content.to_uppercase();
+    let count = content.matches("_NULL_").count();
     vec![(file_id.clone(), "null_count".to_string(), count.to_string())]
 }
 
@@ -158,7 +160,7 @@ fn find_date(file_id: &String, file_path: &String) -> Vec<(String, String, Strin
     let mut results: Vec<(String, String, String)> = Vec::new();
     for (line_number, line) in content.lines().enumerate() {
         if re.is_match(line) {
-            results.push((file_id.clone(), "find_date".to_string(), format!("({}):{}", line_number + 1, line)));
+            results.push((file_id.clone(), "find_date".to_string(), format!("({}, {})", line_number + 1, line)));
         }
     }
     results
